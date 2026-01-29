@@ -3,6 +3,6 @@ const { UpDateUser } = require('../controllers/userController')
 const verifyToken = require('../middleware/authMiddleware')
 
 const userRouter = express.Router()
-userRouter.put('/', verifyToken, UpDateUser)
+userRouter.put('/update-profile', verifyToken, UpDateUser)
 
 module.exports = userRouter
