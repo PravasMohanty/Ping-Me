@@ -1,0 +1,57 @@
+const mongoose = require('mongoose')
+
+const UserSchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: true,
+      trim: true
+    },
+
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true
+    },
+
+    username: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true
+    },
+
+    password: {
+      type: String,
+      required: true
+    },
+
+    avatar: {
+      type: String,
+      default: 'https://yourcdn.com/default-avatar.png'
+    },
+
+    firstLogin: {
+      type: Boolean,
+      default: true
+    },
+
+    groupsPresent: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Group'
+      }
+    ],
+
+    groupCount: {
+      type: Number,
+      default: 0
+    }
+  },
+  {
+    timestamps: true
+  }
+)
+
+module.exports = mongoose.model('User', UserSchema)
