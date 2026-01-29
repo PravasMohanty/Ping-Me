@@ -1,6 +1,7 @@
 const express = require('express')
-const aliveRouter = express.Router()
 const aLive = require('../controllers/aliveController')
+
+const aliveRouter = express.Router()
 
 aliveRouter.get('/', aLive)
 

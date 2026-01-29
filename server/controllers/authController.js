@@ -119,47 +119,8 @@ const Register = async (req, res) => {
   }
 }
 
-/* =========================
-   ONBOARD (AVATAR UPDATE)
-========================= */
-const OnBoard = async (req, res) => {
-  try {
-    const userId = req.user.id
-    const { img } = req.body
-
-    if (!img) {
-      return res.status(400).json({
-        error: 'No avatar selected'
-      })
-    }
-
-    const existingUser = await User.findById(userId)
-
-    if (!existingUser) {
-      return res.status(404).json({
-        error: 'User not found'
-      })
-    }
-
-    existingUser.avatar = img
-    existingUser.firstLogin = false
-
-    await existingUser.save()
-
-    return res.status(200).json({
-      success: true,
-      message: 'Avatar Updated'
-    })
-  } catch (error) {
-    console.log(error)
-    return res.status(500).json({
-      error: 'Internal Server Error'
-    })
-  }
-}
 
 module.exports = {
   Login,
-  Register,
-  OnBoard
+  Register
 }
