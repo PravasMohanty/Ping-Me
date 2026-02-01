@@ -3,7 +3,7 @@ const dotenv = require('dotenv')
 const cors = require('cors')
 const http = require('http')
 const aliveRouter = require('../routes/aliveRouter')
-const DBConnect = require('../database/db')
+const DBConnect = require('../config/db')
 const authRouter = require('../routes/authRoutr')
 const userRouter = require('../routes/userRouter')
 
