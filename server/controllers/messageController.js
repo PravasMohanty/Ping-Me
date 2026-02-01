@@ -1,3 +1,4 @@
+const { io, userSocketMap } = require("../config/socket");
 const Message = require("../models/Message");
 const User = require("../models/User");
 const Redis = require("redis");
@@ -157,15 +158,15 @@ const markMessageAsSeen = async (req, res) => {
 const sendMessage = async (req, res) => {
     try {
         const myId = req.user._id.toString();
-        const { otherId, messageSent } = req.body; // Fixed: removed () from req.body
+        const { otherId, messageSent } = req.body;
 
-        // Fixed: Correct MongoDB query syntax
+        // Validate receiver exists
         const validReceiver = await User.findById(otherId);
 
-        // Fixed: Logic - should check if receiver does NOT exist
         if (!otherId || !messageSent || !validReceiver) {
-            console.log('Error cant send message: No user or No Message'); // Fixed: parentheses
+            console.log('Error cant send message: No user or No Message');
             return res.status(400).json({
+                success: false,
                 message: 'Cant Send Message: Receiver / Message Missing'
             });
         }
@@ -182,16 +183,25 @@ const sendMessage = async (req, res) => {
         // Invalidate cache after sending message
         await invalidateMessageCache(myId, otherId);
 
+        // FIXED: Changed receiverId to otherId (correct variable name)
+        const receiverSocketId = userSocketMap[otherId];
+        if (receiverSocketId) {
+            // FIXED: Event name should not have space: "newMessage" not "new Message"
+            // FIXED: Send the complete message object, not just the text
+            io.to(receiverSocketId).emit("newMessage", newMessage);
+        }
+
         console.log('Message Sent');
         return res.status(200).json({
             success: true,
-            message: 'Message Sent Successfully', // Fixed: colon instead of backtick
+            message: 'Message Sent Successfully',
             data: newMessage
         });
 
     } catch (error) {
         console.error('Error sending message:', error);
         return res.status(500).json({
+            success: false,
             message: 'Internal Server Error'
         });
     }
@@ -200,24 +210,25 @@ const sendMessage = async (req, res) => {
 const sendAttachment = async (req, res) => {
     try {
         const myId = req.user._id.toString();
-        const { otherId, AttachmentSent } = req.body; // Fixed: removed () from req.body
+        const { otherId, attachmentSent } = req.body; // FIXED: Changed to camelCase
 
-        // Fixed: Correct MongoDB query syntax
+        // Validate receiver exists
         const validReceiver = await User.findById(otherId);
 
-        // Fixed: Logic - should check if receiver does NOT exist
-        if (!otherId || !AttachmentSent || !validReceiver) {
-            console.log('Error cant send message: No user or No Message'); // Fixed: parentheses
+        // FIXED: Check for attachmentSent (camelCase)
+        if (!otherId || !attachmentSent || !validReceiver) {
+            console.log('Error cant send attachment: No user or No Attachment');
             return res.status(400).json({
-                message: 'Cant Send Message: Receiver / Message Missing'
+                success: false,
+                message: 'Cant Send Attachment: Receiver / Attachment Missing'
             });
         }
 
-        // Create and save new message
+        // Create and save new message with attachment
         const newMessage = new Message({
             senderId: myId,
             receiverId: otherId,
-            attachment: AttachmentSent
+            attachment: attachmentSent
         });
 
         await newMessage.save();
@@ -225,21 +236,32 @@ const sendAttachment = async (req, res) => {
         // Invalidate cache after sending message
         await invalidateMessageCache(myId, otherId);
 
-        console.log('Message Sent');
+        // ADDED: Real-time notification for attachment
+        const receiverSocketId = userSocketMap[otherId];
+        if (receiverSocketId) {
+            io.to(receiverSocketId).emit("newMessage", newMessage);
+        }
+
+        console.log('Attachment Sent');
         return res.status(200).json({
             success: true,
-            message: 'Message Sent Successfully', // Fixed: colon instead of backtick
+            message: 'Attachment Sent Successfully',
             data: newMessage
         });
 
     } catch (error) {
-        console.error('Error sending message:', error);
+        console.error('Error sending attachment:', error);
         return res.status(500).json({
+            success: false,
             message: 'Internal Server Error'
         });
     }
 };
 
-
-
-module.exports = { getUsersForSideBar, getMessages, markMessageAsSeen, sendAttachment, sendMessage };
+module.exports = {
+    getUsersForSideBar,
+    getMessages,
+    markMessageAsSeen,
+    sendAttachment,
+    sendMessage
+};

@@ -6,6 +6,8 @@ const aliveRouter = require('../routes/aliveRouter')
 const DBConnect = require('../config/db')
 const authRouter = require('../routes/authRoutr')
 const userRouter = require('../routes/userRouter')
+const messageRouter = require('../routes/messageRouter')
+
 
 const app = express()
 const server = http.createServer(app)
@@ -19,6 +21,7 @@ DBConnect();
 app.use('/api/status', aliveRouter)
 app.use('/api/auth', authRouter)
 app.use('/api/user', userRouter)
+app.use('/api/message', messageRouter)
 
 
 const PORT = process.env.PORT || 1965
