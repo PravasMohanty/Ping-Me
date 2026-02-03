@@ -3,10 +3,7 @@ import axios from 'axios';
 const backEndUrl = import.meta.env.VITE_BACKEND_PORT || 'http://localhost:1965';
 
 const API = axios.create({
-    baseURL: backEndUrl,
-    headers: {
-        'Content-Type': 'application/json'
-    }
+    baseURL: backEndUrl
 });
 
 // Add token to requests

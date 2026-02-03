@@ -11,6 +11,7 @@ function LoginPage() {
     const [isLogin, setIsLogin] = useState(true);
     const [registrationStep, setRegistrationStep] = useState(1);
     const [loading, setLoading] = useState(false);
+    const [registrationData, setRegistrationData] = useState({ name: '', username: '' });
     const { login } = useContext(AuthContext);
     const navigate = useNavigate();
 
@@ -31,6 +32,9 @@ function LoginPage() {
 
     const handleRegisterStep1 = (e) => {
         e.preventDefault();
+        const name = e.target.name.value;
+        const username = e.target.username.value;
+        setRegistrationData({ name, username });
         setRegistrationStep(2);
     };
 
@@ -38,8 +42,6 @@ function LoginPage() {
         e.preventDefault();
         setLoading(true);
 
-        const name = e.target.name.value;
-        const username = e.target.username.value;
         const email = e.target.email.value;
         const password = e.target.passwd.value;
         const confirm = e.target.confirm.value;
@@ -50,10 +52,16 @@ function LoginPage() {
             return;
         }
 
-        const result = await login('register', { name, username, email, password });
+        const result = await login('register', {
+            name: registrationData.name,
+            username: registrationData.username,
+            email,
+            password
+        });
         if (result?.success) {
             setRegistrationStep(1);
             setIsLogin(true);
+            setRegistrationData({ name: '', username: '' });
         }
 
         setLoading(false);
@@ -62,6 +70,7 @@ function LoginPage() {
     const handleToggleToRegister = () => {
         setIsLogin(false);
         setRegistrationStep(1);
+        setRegistrationData({ name: '', username: '' });
     };
 
     return (
@@ -286,7 +295,7 @@ function LoginPage() {
                 </div>
             </div>
 
-            <style jsx>{`
+            <style>{`
                 @keyframes float {
                     0%, 100% { transform: translate(0, 0) scale(1); }
                     33% { transform: translate(30px, -30px) scale(1.1); }

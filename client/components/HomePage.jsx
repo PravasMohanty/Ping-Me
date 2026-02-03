@@ -68,7 +68,7 @@ function HomePage() {
                 </div>
             </div>
 
-            <style jsx>{`
+            <style>{`
         @keyframes float {
           0%, 100% { transform: translate(0, 0) scale(1); }
           33% { transform: translate(30px, -30px) scale(1.1); }

@@ -318,7 +318,7 @@ function ChatPage() {
                                             <p>{message.message || message.content}</p>
                                             <p className={`text-xs mt-1 ${message.senderId === authUser._id ? 'text-white/70' : 'text-white/50'
                                                 }`}>
-                                                {new Date(message.createdAt || message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                {new Date(message.createdAt || message.timestamp).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })}
                                             </p>
                                         </div>
                                     </div>

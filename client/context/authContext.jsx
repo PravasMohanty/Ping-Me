@@ -1,6 +1,7 @@
 import {
     createContext,
     useEffect,
+    useRef,
     useState,
 } from 'react';
 
@@ -18,6 +19,24 @@ export const AuthProvider = ({ children }) => {
     const [authUser, setAuthUser] = useState(null);
     const [onlineUsers, setOnlineUsers] = useState([]);
     const [socket, setSocket] = useState(null);
+    const authChecked = useRef(false);
+    const socketRef = useRef(null);
+
+    const connectSocket = (userData) => {
+        if (!userData || socketRef.current?.connected) return;
+        const newSocket = io(backEndUrl, {
+            query: {
+                userId: userData._id,
+            }
+        });
+        newSocket.connect();
+        socketRef.current = newSocket;
+        setSocket(newSocket);
+
+        newSocket.on("getOnlineUsers", (userIds) => {
+            setOnlineUsers(userIds);
+        });
+    };
 
     const checkAuth = async () => {
         try {
@@ -27,7 +46,10 @@ export const AuthProvider = ({ children }) => {
                 connectSocket(data.user);
             }
         } catch (error) {
-            console.error("Auth check failed:", error);
+            // 401 is expected when not logged in, silently ignore
+            if (error.response?.status !== 401) {
+                console.error("Auth check failed:", error);
+            }
         }
     };
 
@@ -88,22 +110,10 @@ export const AuthProvider = ({ children }) => {
         }
     };
 
-    const connectSocket = (userData) => {
-        if (!userData || socket?.connected) return;
-        const newSocket = io(backEndUrl, {
-            query: {
-                userId: userData._id,
-            }
-        });
-        newSocket.connect();
-        setSocket(newSocket);
-
-        newSocket.on("getOnlineUsers", (userIds) => {
-            setOnlineUsers(userIds);
-        });
-    };
-
     useEffect(() => {
+        if (authChecked.current) return;
+        authChecked.current = true;
+
         if (token) {
             axios.defaults.headers.common["authorization"] = `Bearer ${token}`;
         }

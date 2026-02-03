@@ -1,9 +1,15 @@
 const User = require('../models/User')
 const cloudinary = require('../config/cloudnary')
+const { Readable } = require('stream')
+const Redis = require('redis')
+
+const redisClient = Redis.createClient()
+redisClient.on('error', (err) => console.error('Redis Client Error', err))
+redisClient.connect()
 
 const UpDateUser = async (req, res) => {
     try {
-        const { username, avatar } = req.body
+        const { username } = req.body
         const existingUser = req.user
 
         if (!existingUser) {
@@ -16,29 +22,45 @@ const UpDateUser = async (req, res) => {
             existingUser.username = username
         }
 
-        if (avatar) {
-            // DELETE OLD AVATAR 
-            if (
-                existingUser.avatar &&
-                existingUser.avatar.includes('cloudinary')
-            ) {
-                const publicId = existingUser.avatar
-                    .split('/')
-                    .pop()
-                    .split('.')[0]
-
-                await cloudinary.uploader.destroy(`avatars/${publicId}`)
+        if (req.file) {
+            // Upload avatar to Cloudinary
+            try {
+                const stream = Readable.from(req.file.buffer)
+                const result = await new Promise((resolve, reject) => {
+                    const uploadStream = cloudinary.uploader.upload_stream(
+                        {
+                            folder: 'ping-me/avatars',
+                            resource_type: 'auto',
+                            public_id: `avatar_${existingUser._id}`
+                        },
+                        (error, result) => {
+                            if (error) reject(error)
+                            else resolve(result)
+                        }
+                    )
+                    stream.pipe(uploadStream)
+                })
+                existingUser.avatar = result.secure_url
+            } catch (uploadError) {
+                console.error('Cloudinary upload error:', uploadError)
+                return res.status(400).json({
+                    error: 'Failed to upload avatar'
+                })
             }
-
-            // UPLOAD NEW AVATAR
-            const uploadResult = await cloudinary.uploader.upload(avatar, {
-                folder: 'avatars'
-            })
-
-            existingUser.avatar = uploadResult.secure_url
         }
 
         await existingUser.save()
+
+        // Invalidate Redis cache for all users' user lists
+        // This ensures the updated avatar is fetched fresh
+        try {
+            const allUsers = await User.find()
+            await Promise.all(
+                allUsers.map(user => redisClient.del(`users:${user._id.toString()}`))
+            )
+        } catch (cacheError) {
+            console.warn('Warning: Could not invalidate Redis cache:', cacheError)
+        }
 
         // hide password
         existingUser.password = undefined
