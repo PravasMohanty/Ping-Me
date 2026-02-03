@@ -7,6 +7,7 @@ const DBConnect = require('../config/db')
 const authRouter = require('../routes/authRoutr')
 const userRouter = require('../routes/userRouter')
 const messageRouter = require('../routes/messageRouter')
+const { establishConnection } = require('../config/socket')
 
 
 const app = express()
@@ -17,6 +18,9 @@ app.use(express.urlencoded({ extended: true }))
 app.use(cors())
 
 DBConnect();
+
+// Initialize Socket.IO
+establishConnection(server);
 
 app.use('/api/status', aliveRouter)
 app.use('/api/auth', authRouter)

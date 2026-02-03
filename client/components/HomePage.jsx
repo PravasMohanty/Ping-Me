@@ -1,8 +1,12 @@
 import React from 'react';
 
+import { useNavigate } from 'react-router-dom';
+
 function HomePage() {
+    const navigate = useNavigate();
+
     const handleLoginRedirect = () => {
-        window.location.href = '/auth'
+        navigate('/auth');
     }
 
     return (
