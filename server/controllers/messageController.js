@@ -74,7 +74,8 @@ const getUsersForSideBar = async (req, res) => {
 const getMessages = async (req, res) => {
     try {
         const myId = req.user._id.toString();
-        const { selectedId } = req.body;
+        const { id } = req.params;
+        const selectedId = id;
 
         const ids = [myId, selectedId].sort();
         const cacheKey = `messages:${ids[0]}:${ids[1]}`;
@@ -158,7 +159,9 @@ const markMessageAsSeen = async (req, res) => {
 const sendMessage = async (req, res) => {
     try {
         const myId = req.user._id.toString();
-        const { otherId, messageSent } = req.body;
+        const { id } = req.params; // Get receiver ID from URL parameter
+        const { message: messageSent } = req.body; // Get message from body
+        const otherId = id;
 
         // Validate receiver exists
         const validReceiver = await User.findById(otherId);

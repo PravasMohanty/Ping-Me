@@ -120,7 +120,38 @@ const Register = async (req, res) => {
 }
 
 
-module.exports = {
-  Login,
-  Register
+/* =========================
+   CHECK AUTH
+========================= */
+const CheckAuth = async (req, res) => {
+  try {
+    const userId = req.userId;
+
+    const user = await User.findById(userId).select('-password');
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      user: {
+        _id: user._id,
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        username: user.username,
+        avatar: user.avatar
+      }
+    });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal Server Error'
+    });
+  }
 }

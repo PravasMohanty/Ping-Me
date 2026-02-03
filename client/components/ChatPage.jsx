@@ -1,69 +1,75 @@
 import React, {
-  useEffect,
-  useState,
+    useContext,
+    useEffect,
+    useState,
 } from 'react';
 
+import { useNavigate } from 'react-router-dom';
+
+import { AuthContext } from '../context/authContext';
+
 function ChatPage() {
-    const [contacts, setContacts] = useState([]);
-    const [selectedContact, setSelectedContact] = useState(null);
+    const navigate = useNavigate();
+    const { authUser, socket, logout, axios } = useContext(AuthContext);
+
+    const [users, setUsers] = useState([]);
+    const [selectedUser, setSelectedUser] = useState(null);
     const [messages, setMessages] = useState([]);
-    const [loadingContacts, setLoadingContacts] = useState(true);
+    const [loadingUsers, setLoadingUsers] = useState(true);
     const [loadingMessages, setLoadingMessages] = useState(false);
-    const [contactsError, setContactsError] = useState(false);
-    const [currentUser, setCurrentUser] = useState(null);
+    const [usersError, setUsersError] = useState(false);
     const [messageInput, setMessageInput] = useState('');
     const [showUserMenu, setShowUserMenu] = useState(false);
+    const [sending, setSending] = useState(false);
 
-    // Fetch current user data
+    // Fetch users for sidebar
     useEffect(() => {
-        fetchCurrentUser();
+        fetchUsers();
     }, []);
 
-    // Fetch contacts
+    // Fetch messages when user is selected
     useEffect(() => {
-        fetchContacts();
-    }, []);
+        if (selectedUser) {
+            fetchMessages(selectedUser._id);
+        }
+    }, [selectedUser]);
 
-    // Fetch messages when contact is selected
+    // Listen for new messages via socket
     useEffect(() => {
-        if (selectedContact) {
-            fetchMessages(selectedContact.id);
-        }
-    }, [selectedContact]);
+        if (!socket) return;
 
-    const fetchCurrentUser = async () => {
-        try {
-            const response = await fetch('/api/user/me');
-            const data = await response.json();
-            setCurrentUser(data);
-        } catch (error) {
-            console.error('Error fetching current user:', error);
-        }
-    };
+        socket.on("newMessage", (message) => {
+            if (selectedUser && message.senderId === selectedUser._id) {
+                setMessages((prev) => [...prev, message]);
+            }
+        });
 
-    const fetchContacts = async () => {
+        return () => socket.off("newMessage");
+    }, [socket, selectedUser]);
+
+    const fetchUsers = async () => {
         try {
-            setLoadingContacts(true);
-            const response = await fetch('/api/contacts');
-            if (!response.ok) throw new Error('Failed to fetch contacts');
-            const data = await response.json();
-            setContacts(data);
-            setContactsError(false);
+            setLoadingUsers(true);
+            const { data } = await axios.get('/api/message/users');
+            if (data.success) {
+                setUsers(data.users || []);
+                setUsersError(false);
+            }
         } catch (error) {
-            console.error('Error fetching contacts:', error);
-            setContactsError(true);
+            console.error('Error fetching users:', error);
+            setUsersError(true);
         } finally {
-            setLoadingContacts(false);
+            setLoadingUsers(false);
         }
     };
 
-    const fetchMessages = async (contactId) => {
+    const fetchMessages = async (userId) => {
         try {
             setLoadingMessages(true);
-            const response = await fetch(`/api/messages/${contactId}`);
-            if (!response.ok) throw new Error('Failed to fetch messages');
-            const data = await response.json();
-            setMessages(data);
+            const { data } = await axios.get(`/api/message/${userId}`);
+            // Backend returns array directly or wrapped in success object
+            const messagesArray = Array.isArray(data) ? data : (data.messages || data.data || []);
+            setMessages(messagesArray);
         } catch (error) {
             console.error('Error fetching messages:', error);
             setMessages([]);
@@ -74,33 +80,40 @@ function ChatPage() {
 
     const handleSendMessage = async (e) => {
         e.preventDefault();
-        if (!messageInput.trim() || !selectedContact) return;
+        if (!messageInput.trim() || !selectedUser) return;
 
+        setSending(true);
         try {
-            const response = await fetch('/api/messages/send', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    recipientId: selectedContact.id,
-                    content: messageInput
-                })
+            const { data } = await axios.post(`/api/message/send/text-message/${selectedUser._id}`, {
+                message: messageInput
             });
 
-            if (response.ok) {
-                const newMessage = await response.json();
-                setMessages([...messages, newMessage]);
+            if (data.success) {
+                const messageToAdd = {
+                    ...data.data,
+                    senderId: authUser._id
+                };
+                setMessages([...messages, messageToAdd]);
                 setMessageInput('');
             }
         } catch (error) {
             console.error('Error sending message:', error);
+        } finally {
+            setSending(false);
         }
     };
 
+    const handleLogout = async () => {
+        await logout();
+        navigate('/');
+    };
+
     const handleEditUser = () => {
-        window.location.href = '/user';
+        navigate('/profile');
     };
 
     const getInitials = (name) => {
+        if (!name) return 'U';
         return name
             .split(' ')
             .map(word => word[0])
@@ -108,6 +121,25 @@ function ChatPage() {
             .toUpperCase()
             .slice(0, 2);
     };
+
+    const getAvatarColor = (userId) => {
+        const colors = [
+            'from-indigo-500 to-pink-500',
+            'from-purple-500 to-pink-500',
+            'from-blue-500 to-purple-500',
+            'from-cyan-500 to-blue-500',
+            'from-teal-500 to-cyan-500',
+        ];
+        return colors[userId.charCodeAt(0) % colors.length];
+    };
+
+    if (!authUser) {
+        return (
+            <div className="flex items-center justify-center h-screen">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
+            </div>
+        );
+    }
 
     return (
         <div className="flex h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900">
@@ -118,23 +150,23 @@ function ChatPage() {
                 {/* Current User Header */}
                 <div className="p-6 border-b border-white/10 relative">
                     <div className="flex items-center gap-4">
-                        {currentUser?.avatar ? (
+                        {authUser?.avatar ? (
                             <img
-                                src={currentUser.avatar}
-                                alt={currentUser.name}
+                                src={authUser.avatar}
+                                alt={authUser.name}
                                 className="w-14 h-14 rounded-full object-cover ring-2 ring-indigo-500/50"
                             />
                         ) : (
-                            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-indigo-500 to-pink-500 flex items-center justify-center text-white font-bold text-lg ring-2 ring-indigo-500/50">
-                                {currentUser ? getInitials(currentUser.name) : '...'}
+                            <div className={`w-14 h-14 rounded-full bg-gradient-to-br ${getAvatarColor(authUser._id)} flex items-center justify-center text-white font-bold text-lg ring-2 ring-indigo-500/50`}>
+                                {getInitials(authUser.name)}
                             </div>
                         )}
                         <div className="flex-1 min-w-0">
                             <h2 className="text-white font-semibold text-lg truncate">
-                                {currentUser?.name || 'Loading...'}
+                                {authUser?.name || 'Loading...'}
                             </h2>
                             <p className="text-white/50 text-sm truncate">
-                                @{currentUser?.username || 'username'}
+                                @{authUser?.username || 'username'}
                             </p>
                         </div>
 
@@ -164,58 +196,69 @@ function ChatPage() {
                         <div className="absolute right-6 top-20 bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl shadow-2xl overflow-hidden z-50 min-w-[180px]">
                             <button
                                 onClick={handleEditUser}
-                                className="w-full px-4 py-3 text-left text-white hover:bg-white/10 transition-all duration-300 flex items-center gap-3"
+                                className="w-full px-4 py-3 text-left text-white hover:bg-white/10 transition-all duration-300 flex items-center gap-3 border-b border-white/10"
                             >
-                                <img src="menu.svg" alt="" />
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                </svg>
                                 Edit Profile
+                            </button>
+                            <button
+                                onClick={handleLogout}
+                                className="w-full px-4 py-3 text-left text-red-400 hover:bg-white/10 transition-all duration-300 flex items-center gap-3"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                                </svg>
+                                Logout
                             </button>
                         </div>
                     )}
                 </div>
 
-                {/* Contacts List */}
+                {/* Users List */}
                 <div className="flex-1 overflow-y-auto">
-                    {loadingContacts ? (
+                    {loadingUsers ? (
                         <div className="flex items-center justify-center h-32">
                             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
                         </div>
-                    ) : contactsError ? (
+                    ) : usersError ? (
                         <div className="flex flex-col items-center justify-center h-32 px-6 text-center">
-                            <p className="text-white/50 text-sm">Can't load contacts</p>
+                            <p className="text-white/50 text-sm">Can't load users</p>
                             <button
-                                onClick={fetchContacts}
+                                onClick={fetchUsers}
                                 className="mt-3 text-indigo-400 text-sm hover:text-indigo-300 transition-colors"
                             >
                                 Try again
                             </button>
                         </div>
-                    ) : contacts.length === 0 ? (
+                    ) : users.length === 0 ? (
                         <div className="flex items-center justify-center h-32 px-6 text-center">
-                            <p className="text-white/50 text-sm">No contacts yet</p>
+                            <p className="text-white/50 text-sm">No users available</p>
                         </div>
                     ) : (
                         <div className="divide-y divide-white/5">
-                            {contacts.map((contact) => (
+                            {users.map((user) => (
                                 <button
-                                    key={contact.id}
-                                    onClick={() => setSelectedContact(contact)}
-                                    className={`w-full p-4 flex items-center gap-3 hover:bg-white/5 transition-all ${selectedContact?.id === contact.id ? 'bg-white/10' : ''
+                                    key={user._id}
+                                    onClick={() => setSelectedUser(user)}
+                                    className={`w-full p-4 flex items-center gap-3 hover:bg-white/5 transition-all ${selectedUser?._id === user._id ? 'bg-white/10' : ''
                                         }`}
                                 >
-                                    {contact.avatar ? (
+                                    {user.avatar ? (
                                         <img
-                                            src={contact.avatar}
-                                            alt={contact.name}
+                                            src={user.avatar}
+                                            alt={user.name}
                                             className="w-12 h-12 rounded-full object-cover"
                                         />
                                     ) : (
-                                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-semibold">
-                                            {getInitials(contact.name)}
+                                        <div className={`w-12 h-12 rounded-full bg-gradient-to-br ${getAvatarColor(user._id)} flex items-center justify-center text-white font-semibold`}>
+                                            {getInitials(user.name)}
                                         </div>
                                     )}
                                     <div className="flex-1 min-w-0 text-left">
-                                        <h3 className="text-white font-medium truncate">{contact.name}</h3>
-                                        <p className="text-white/50 text-sm truncate">@{contact.username}</p>
+                                        <h3 className="text-white font-medium truncate">{user.name}</h3>
+                                        <p className="text-white/50 text-sm truncate">@{user.username}</p>
                                     </div>
                                 </button>
                             ))}
@@ -227,25 +270,25 @@ function ChatPage() {
             {/* Chat Area - 70% */}
             <div className="flex-1 flex flex-col">
 
-                {selectedContact ? (
+                {selectedUser ? (
                     <>
                         {/* Chat Header */}
                         <div className="p-6 bg-white/5 backdrop-blur-xl border-b border-white/10">
                             <div className="flex items-center gap-4">
-                                {selectedContact.avatar ? (
+                                {selectedUser.avatar ? (
                                     <img
-                                        src={selectedContact.avatar}
-                                        alt={selectedContact.name}
+                                        src={selectedUser.avatar}
+                                        alt={selectedUser.name}
                                         className="w-12 h-12 rounded-full object-cover ring-2 ring-indigo-500/50"
                                     />
                                 ) : (
-                                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-semibold ring-2 ring-indigo-500/50">
-                                        {getInitials(selectedContact.name)}
+                                    <div className={`w-12 h-12 rounded-full bg-gradient-to-br ${getAvatarColor(selectedUser._id)} flex items-center justify-center text-white font-semibold ring-2 ring-indigo-500/50`}>
+                                        {getInitials(selectedUser.name)}
                                     </div>
                                 )}
                                 <div>
-                                    <h2 className="text-white font-semibold text-lg">{selectedContact.name}</h2>
-                                    <p className="text-white/50 text-sm">@{selectedContact.username}</p>
+                                    <h2 className="text-white font-semibold text-lg">{selectedUser.name}</h2>
+                                    <p className="text-white/50 text-sm">@{selectedUser.username}</p>
                                 </div>
                             </div>
                         </div>
@@ -258,24 +301,24 @@ function ChatPage() {
                                 </div>
                             ) : messages.length === 0 ? (
                                 <div className="flex items-center justify-center h-full">
-                                    <p className="text-white/50 text-center">Waiting for messages...</p>
+                                    <p className="text-white/50 text-center">Start a conversation</p>
                                 </div>
                             ) : (
-                                messages.map((message) => (
+                                messages.map((message, index) => (
                                     <div
-                                        key={message.id}
-                                        className={`flex ${message.senderId === currentUser?.id ? 'justify-end' : 'justify-start'}`}
+                                        key={index}
+                                        className={`flex ${message.senderId === authUser._id ? 'justify-end' : 'justify-start'}`}
                                     >
                                         <div
-                                            className={`max-w-[70%] rounded-2xl px-4 py-3 ${message.senderId === currentUser?.id
+                                            className={`max-w-[70%] rounded-2xl px-4 py-3 ${message.senderId === authUser._id
                                                 ? 'bg-gradient-to-r from-indigo-500 to-pink-500 text-white'
                                                 : 'bg-white/10 text-white backdrop-blur-sm'
                                                 }`}
                                         >
-                                            <p>{message.content}</p>
-                                            <p className={`text-xs mt-1 ${message.senderId === currentUser?.id ? 'text-white/70' : 'text-white/50'
+                                            <p>{message.message || message.content}</p>
+                                            <p className={`text-xs mt-1 ${message.senderId === authUser._id ? 'text-white/70' : 'text-white/50'
                                                 }`}>
-                                                {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                {new Date(message.createdAt || message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                             </p>
                                         </div>
                                     </div>
@@ -291,14 +334,15 @@ function ChatPage() {
                                     value={messageInput}
                                     onChange={(e) => setMessageInput(e.target.value)}
                                     placeholder="Type a message..."
-                                    className="flex-1 px-4 py-3 bg-white/5 border border-white/15 rounded-xl text-white placeholder-white/30 focus:outline-none focus:bg-white/8 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all duration-300"
+                                    disabled={sending}
+                                    className="flex-1 px-4 py-3 bg-white/5 border border-white/15 rounded-xl text-white placeholder-white/30 focus:outline-none focus:bg-white/8 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all duration-300 disabled:opacity-50"
                                 />
                                 <button
                                     type="submit"
-                                    disabled={!messageInput.trim()}
+                                    disabled={!messageInput.trim() || sending}
                                     className="px-6 py-3 bg-gradient-to-r from-indigo-500 to-pink-500 rounded-xl text-white font-semibold hover:-translate-y-0.5 hover:shadow-xl hover:shadow-indigo-500/40 active:translate-y-0 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
                                 >
-                                    Send
+                                    {sending ? 'Sending...' : 'Send'}
                                 </button>
                             </form>
                         </div>
@@ -307,8 +351,8 @@ function ChatPage() {
                     <div className="flex-1 flex items-center justify-center">
                         <div className="text-center">
                             <div className="text-6xl mb-4">💬</div>
-                            <h3 className="text-white/70 text-xl font-semibold mb-2">Select a chat to start messaging</h3>
-                            <p className="text-white/40 text-sm">Choose from your contacts on the left</p>
+                            <h3 className="text-white/70 text-xl font-semibold mb-2">Select a user to start messaging</h3>
+                            <p className="text-white/40 text-sm">Choose from the list on the left</p>
                         </div>
                     </div>
                 )}

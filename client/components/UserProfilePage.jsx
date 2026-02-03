@@ -1,56 +1,44 @@
 import React, {
-  useEffect,
-  useState,
+    useContext,
+    useEffect,
+    useState,
 } from 'react';
 
 import { useNavigate } from 'react-router-dom';
 
-import {
-  getUserProfile,
-  updateUserProfile,
-} from '../api/api';
+import { AuthContext } from '../context/authContext';
 
 function UserProfilePage() {
-
     const navigate = useNavigate();
+    const { authUser, setAuthUser, updateProfile, axios } = useContext(AuthContext);
 
     const [name, setName] = useState("");
     const [userName, setUserName] = useState("");
     const [email, setEmail] = useState("");
-    const [contacts, setContacts] = useState(0);
     const [userAvatar, setUserAvatar] = useState(null);
     const [previewAvatar, setPreviewAvatar] = useState(null);
+    const [avatarFile, setAvatarFile] = useState(null);
 
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
 
     useEffect(() => {
-        loadProfile();
-    }, []);
-
-    const loadProfile = async () => {
-        try {
-            setLoading(true);
-
-            const data = await getUserProfile();
-
-            setName(data.name || "");
-            setUserName(data.username || "");
-            setEmail(data.email || "");
-            setContacts(data.contactsCount || 0);
-            setUserAvatar(data.avatar || null);
-
-        } catch (err) {
-            alert("Failed to load profile");
-        } finally {
+        if (authUser) {
+            setName(authUser.name || "");
+            setUserName(authUser.username || "");
+            setEmail(authUser.email || "");
+            setUserAvatar(authUser.avatar || null);
+            setLoading(false);
+        } else {
             setLoading(false);
         }
-    };
+    }, [authUser]);
 
     const handleAvatarChange = (e) => {
         const file = e.target.files[0];
         if (!file) return;
 
+        setAvatarFile(file);
         const reader = new FileReader();
         reader.onloadend = () => setPreviewAvatar(reader.result);
         reader.readAsDataURL(file);
@@ -58,36 +46,33 @@ function UserProfilePage() {
 
     const handleSaveProfile = async (e) => {
         e.preventDefault();
+        setSaving(true);
 
         try {
-            setSaving(true);
-
             const formData = new FormData();
             formData.append("name", name);
             formData.append("username", userName);
             formData.append("email", email);
 
-            const fileInput = document.querySelector("#avatar-upload");
-            if (fileInput.files[0]) {
-                formData.append("avatar", fileInput.files[0]);
+            if (avatarFile) {
+                formData.append("avatar", avatarFile);
             }
 
-            const data = await updateUserProfile(formData);
-
-            setUserAvatar(data.avatar || userAvatar);
-            setPreviewAvatar(null);
-
-            alert("Profile updated successfully!");
-
-        } catch (err) {
-            alert("Profile update failed");
+            const result = await updateProfile(formData);
+            if (result?.success) {
+                setPreviewAvatar(null);
+                setAvatarFile(null);
+                navigate("/messages");
+            }
+        } catch (error) {
+            console.error("Profile update error:", error);
         } finally {
             setSaving(false);
         }
     };
 
     const getInitials = (name) => {
-        if (!name) return "??";
+        if (!name) return "U";
         return name
             .split(" ")
             .map(w => w[0])
@@ -96,98 +81,133 @@ function UserProfilePage() {
             .toUpperCase();
     };
 
+    const getAvatarColor = () => {
+        const colors = [
+            'from-indigo-500 to-pink-500',
+            'from-purple-500 to-pink-500',
+            'from-blue-500 to-purple-500',
+            'from-cyan-500 to-blue-500',
+            'from-teal-500 to-cyan-500',
+        ];
+        return colors[authUser?._id?.charCodeAt(0) % colors.length] || 'from-indigo-500 to-pink-500';
+    };
+
     if (loading) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-slate-900">
-                <div className="animate-spin h-10 w-10 border-b-2 border-indigo-500 rounded-full"></div>
+            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900">
+                <div className="animate-spin h-12 w-12 border-b-2 border-indigo-500 rounded-full"></div>
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen bg-slate-900 flex justify-center items-center p-4">
+        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 p-4">
 
-            <div className="bg-white/10 p-8 rounded-xl w-full max-w-xl">
+            <div className="max-w-2xl mx-auto">
 
                 <button
-                    onClick={() => navigate("/chat")}
-                    className="text-white mb-4"
+                    onClick={() => navigate("/messages")}
+                    className="mb-6 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-all duration-300 flex items-center gap-2"
                 >
-                    ← Back
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                    Back to Chat
                 </button>
 
-                <h1 className="text-2xl text-white font-bold mb-6">
-                    Edit Profile
-                </h1>
+                <div className="bg-white/8 backdrop-blur-xl border border-white/20 rounded-2xl p-8">
 
-                {/* Avatar */}
-                <div className="flex flex-col items-center mb-6">
+                    <h1 className="text-3xl font-bold text-white mb-8">
+                        Edit Profile
+                    </h1>
 
-                    {previewAvatar || userAvatar ? (
-                        <img
-                            src={previewAvatar || userAvatar}
-                            className="w-28 h-28 rounded-full object-cover"
+                    {/* Avatar Section */}
+                    <div className="flex flex-col items-center mb-8">
+                        {previewAvatar || userAvatar ? (
+                            <img
+                                src={previewAvatar || userAvatar}
+                                alt="Profile"
+                                className="w-32 h-32 rounded-full object-cover ring-4 ring-indigo-500/50 mb-4"
+                            />
+                        ) : (
+                            <div className={`w-32 h-32 rounded-full bg-gradient-to-br ${getAvatarColor()} flex items-center justify-center text-5xl font-bold text-white ring-4 ring-indigo-500/50 mb-4`}>
+                                {getInitials(name)}
+                            </div>
+                        )}
+
+                        <input
+                            id="avatar-upload"
+                            type="file"
+                            accept="image/*"
+                            hidden
+                            onChange={handleAvatarChange}
                         />
-                    ) : (
-                        <div className="w-28 h-28 rounded-full bg-indigo-500 flex items-center justify-center text-3xl text-white">
-                            {getInitials(name)}
+
+                        <label
+                            htmlFor="avatar-upload"
+                            className="px-4 py-2 bg-indigo-500/50 hover:bg-indigo-500 text-white rounded-lg cursor-pointer transition-all duration-300"
+                        >
+                            Change Photo
+                        </label>
+                    </div>
+
+                    {/* Form Section */}
+                    <form onSubmit={handleSaveProfile} className="space-y-5">
+
+                        <div>
+                            <label className="block text-white/90 text-sm font-medium mb-2">
+                                Full Name
+                            </label>
+                            <input
+                                type="text"
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                placeholder="Your full name"
+                                disabled={saving}
+                                className="w-full px-4 py-3 bg-white/5 border border-white/15 rounded-xl text-white placeholder-white/30 focus:outline-none focus:bg-white/8 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all duration-300 disabled:opacity-50"
+                            />
                         </div>
-                    )}
 
-                    <input
-                        id="avatar-upload"
-                        type="file"
-                        accept="image/*"
-                        hidden
-                        onChange={handleAvatarChange}
-                    />
+                        <div>
+                            <label className="block text-white/90 text-sm font-medium mb-2">
+                                Username
+                            </label>
+                            <input
+                                type="text"
+                                value={userName}
+                                onChange={(e) => setUserName(e.target.value)}
+                                placeholder="Your username"
+                                disabled={saving}
+                                className="w-full px-4 py-3 bg-white/5 border border-white/15 rounded-xl text-white placeholder-white/30 focus:outline-none focus:bg-white/8 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all duration-300 disabled:opacity-50"
+                            />
+                        </div>
 
-                    <label
-                        htmlFor="avatar-upload"
-                        className="mt-2 text-indigo-400 cursor-pointer"
-                    >
-                        Change Photo
-                    </label>
+                        <div>
+                            <label className="block text-white/90 text-sm font-medium mb-2">
+                                Email
+                            </label>
+                            <input
+                                type="email"
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                placeholder="your@email.com"
+                                disabled={saving}
+                                className="w-full px-4 py-3 bg-white/5 border border-white/15 rounded-xl text-white placeholder-white/30 focus:outline-none focus:bg-white/8 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all duration-300 disabled:opacity-50"
+                            />
+                        </div>
 
+                        <div className="pt-4">
+                            <button
+                                type="submit"
+                                disabled={saving}
+                                className="w-full py-3 bg-gradient-to-r from-indigo-500 to-pink-500 hover:from-indigo-600 hover:to-pink-600 text-white font-semibold rounded-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {saving ? 'Saving Changes...' : 'Save Changes'}
+                            </button>
+                        </div>
+
+                    </form>
                 </div>
-
-                <form onSubmit={handleSaveProfile} className="space-y-4">
-
-                    <input
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        placeholder="Full Name"
-                        className="w-full p-3 rounded bg-white/10 text-white"
-                    />
-
-                    <input
-                        value={userName}
-                        onChange={(e) => setUserName(e.target.value)}
-                        placeholder="Username"
-                        className="w-full p-3 rounded bg-white/10 text-white"
-                    />
-
-                    <input
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        placeholder="Email"
-                        className="w-full p-3 rounded bg-white/10 text-white"
-                    />
-
-                    <p className="text-gray-400">
-                        Contacts: {contacts}
-                    </p>
-
-                    <button
-                        type="submit"
-                        disabled={saving}
-                        className="w-full bg-indigo-500 py-3 rounded text-white font-semibold"
-                    >
-                        {saving ? "Saving..." : "Save Changes"}
-                    </button>
-
-                </form>
-
             </div>
         </div>
     );
