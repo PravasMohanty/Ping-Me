@@ -155,3 +155,5 @@ const CheckAuth = async (req, res) => {
     });
   }
 }
+
+module.exports = { Login, Register, CheckAuth }
