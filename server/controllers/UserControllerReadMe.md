@@ -1,527 +1,619 @@
-# Messaging Controller Documentation
+# User Profile Update Controller - Complete Documentation
 
 ## Overview
-
-This is a Node.js Express controller that handles messaging functionality with Redis caching. It manages user retrieval, message fetching, and message status updates with performance optimization through caching.
-
----
-
-## Dependencies
-
-```javascript
-const Message = require("../models/Message");
-const User = require("../models/User");
-const Redis = require("redis");
-```
-
-- **Message Model**: MongoDB schema for storing chat messages
-- **User Model**: MongoDB schema for user data
-- **Redis**: In-memory data store used for caching to improve performance
+This module handles user profile updates in a Node.js application, specifically managing username changes and avatar uploads with Cloudinary integration and Redis caching.
 
 ---
 
-## Redis Configuration
-
-```javascript
-const redisClient = Redis.createClient();
-redisClient.on('error', (err) => console.error('Redis Client Error', err));
-redisClient.connect();
-```
-
-**What this does:**
-- Creates a Redis client connection
-- Sets up error handling for Redis connection issues
-- Establishes connection to Redis server
-
-**Cache Expiration:**
-```javascript
-const DEFAULT_EXPIRATION = 3600;
-```
-- Cached data expires after 3600 seconds (1 hour)
-- After expiration, data is fetched fresh from MongoDB
+## Table of Contents
+1. [Dependencies & Setup](#dependencies--setup)
+2. [Core Functionality](#core-functionality)
+3. [Code Walkthrough](#code-walkthrough)
+4. [Key Concepts Explained](#key-concepts-explained)
+5. [Error Handling](#error-handling)
+6. [Redis Cache Invalidation Strategy](#redis-cache-invalidation-strategy)
+7. [Important Notes & Issues](#important-notes--issues)
+8. [Usage Example](#usage-example)
+9. [Environment Variables](#environment-variables-needed)
 
 ---
 
-## Core Functions
+## Dependencies & Setup
 
-### 1. `invalidateMessageCache(userId1, userId2)`
-
-**Purpose:** Clears cached data when messages are updated
-
+### Required Packages
 ```javascript
-const invalidateMessageCache = async (userId1, userId2) => {
-  try {
-    const ids = [userId1, userId2].sort();
-    const cacheKey = `messages:${ids[0]}:${ids[1]}`;
-    await redisClient.del(cacheKey);
-    await redisClient.del(`users:${userId1}`);
-    await redisClient.del(`users:${userId2}`);
-  } catch (error) {
-    console.error('Cache invalidation error:', error);
-  }
-};
+const User = require('../models/User')
+const cloudinary = require('../config/cloudnary')
+const { Readable } = require('stream')
+const Redis = require('redis')
 ```
 
-**How it works:**
-1. **Sorts user IDs** to ensure consistent cache key format (prevents duplicate keys like `user1:user2` and `user2:user1`)
-2. **Deletes three cache entries:**
-   - Message cache between the two users
-   - User sidebar cache for both users
-3. **Error handling** to prevent cache errors from breaking the application
+**What each does:**
+- **User**: Mongoose model for database operations
+- **cloudinary**: Cloud storage service for images
+- **Readable**: Node.js stream utility for handling file buffers
+- **Redis**: In-memory cache for performance optimization
 
-**When it's called:**
-- After marking a message as seen
-- When message data changes and cache needs to be refreshed
+### Redis Client Initialization
+```javascript
+const redisClient = Redis.createClient()
+redisClient.on('error', (err) => console.error('Redis Client Error', err))
+redisClient.connect()
+```
+
+**Understanding this:**
+- `createClient()`: Creates a Redis connection instance
+- `.on('error', callback)`: Event listener for connection errors
+- `.connect()`: Establishes the connection to Redis server
 
 ---
 
-### 2. `getUsersForSideBar(req, res)`
+## Core Functionality
 
-**Purpose:** Retrieves all users (except current user) for the chat sidebar with unseen message counts
+The `UpDateUser` function performs three main operations:
 
+1. **Username Update**: Changes user's username if provided
+2. **Avatar Upload**: Uploads image to Cloudinary and updates user profile
+3. **Cache Invalidation**: Clears Redis cache for all users
+
+---
+
+## Code Walkthrough
+
+### 1. Function Signature
 ```javascript
-const getUsersForSideBar = async (req, res) => {
-  try {
-    const currentUserId = req.user._id.toString();
-    const cacheKey = `users:${currentUserId}`;
+const UpDateUser = async (req, res) => {
+```
+- **async**: Function returns a Promise, allows `await` usage
+- **req**: Express request object (contains body, file, user data)
+- **res**: Express response object (for sending responses)
+
+---
+
+### 2. Extract Data & Validate User
+```javascript
+const { username } = req.body
+const existingUser = req.user
 ```
 
-**Step-by-step breakdown:**
-
-#### Step 1: Get Current User ID
+**Destructuring Assignment:**
 ```javascript
-const currentUserId = req.user._id.toString();
+const { username } = req.body
+// Same as: const username = req.body.username
 ```
-- Extracts authenticated user's ID from request object (set by authentication middleware)
-- Converts MongoDB ObjectId to string for consistent comparison
 
-#### Step 2: Check Cache
+**Middleware Assumption:**
+- `req.user` is populated by authentication middleware
+- Contains the logged-in user's database record
+
+**User Validation:**
 ```javascript
-const cachedUsers = await redisClient.get(cacheKey);
-let filteredUsers;
-
-if (cachedUsers) {
-  filteredUsers = JSON.parse(cachedUsers);
-} else {
-  // Fetch from database...
+if (!existingUser) {
+    return res.status(404).json({
+        error: 'User not found'
+    })
 }
 ```
-- Looks for cached user list in Redis
-- If found: parses JSON string back to JavaScript array
-- If not found: queries MongoDB database
 
-#### Step 3: Database Query (if cache miss)
+---
+
+### 3. Username Update Logic
 ```javascript
-filteredUsers = await User.find({ 
-  _id: { $ne: currentUserId } 
-}).select("-password");
+if (username) {
+    existingUser.username = username
+}
 ```
-- **`find({ _id: { $ne: currentUserId } })`**: Finds all users where ID is NOT EQUAL to current user
-- **`.select("-password")`**: Excludes password field from results for security
-- Stores result in Redis cache for future requests
 
-#### Step 4: Count Unseen Messages
+**Why this works:**
+- `existingUser` is a Mongoose document (reference type)
+- Direct assignment modifies the object
+- Changes saved later with `.save()`
+
+---
+
+### 4. Avatar Upload to Cloudinary
+
+#### Understanding `req.file`
+Comes from middleware like **Multer**:
 ```javascript
-const unseenMessages = {};
-await Promise.all(
-  filteredUsers.map(async (user) => {
-    const count = await Message.countDocuments({
-      senderId: user._id,
-      receiverId: currentUserId,
-      seen: false,
-    });
-    if (count > 0) {
-      unseenMessages[user._id.toString()] = count;
-    }
-  })
-);
+// Typical multer setup (not shown in code)
+const multer = require('multer')
+const upload = multer({ storage: multer.memoryStorage() })
+// Route: app.put('/user', upload.single('avatar'), UpDateUser)
 ```
-- **Creates object** to store unseen message counts per user
-- **`Promise.all()`**: Runs all database queries in parallel for better performance
-- **`.map()`**: Iterates through each user
-- **Counts documents** where:
-  - Message was sent BY that user
-  - Message was sent TO current user
-  - Message hasn't been seen yet
-- **Only adds to object** if count is greater than 0
 
-#### Step 5: Return Response
+#### The Upload Process
+```javascript
+if (req.file) {
+    const stream = Readable.from(req.file.buffer)
+```
+
+**Stream Creation:**
+- `req.file.buffer`: Binary data of uploaded file (Buffer object)
+- `Readable.from()`: Converts buffer to readable stream
+- **Why streams?** Efficient for large files, prevents memory overflow
+
+---
+
+#### Promise-Based Upload
+```javascript
+const result = await new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+        {
+            folder: 'ping-me/avatars',
+            resource_type: 'auto',
+            public_id: `avatar_${existingUser._id}`
+        },
+        (error, result) => {
+            if (error) reject(error)
+            else resolve(result)
+        }
+    )
+    stream.pipe(uploadStream)
+})
+```
+
+**Breaking it down:**
+
+**Cloudinary Options:**
+- `folder`: Organizes uploads in Cloudinary dashboard
+- `resource_type: 'auto'`: Auto-detects file type (image/video/raw)
+- `public_id`: Unique identifier (overwrites old avatar)
+
+**Callback to Promise Pattern:**
+```javascript
+// Cloudinary uses callbacks, we convert to Promise
+new Promise((resolve, reject) => {
+    // Callback function becomes Promise resolver
+    cloudinary.uploader.upload_stream(options, (error, result) => {
+        if (error) reject(error)    // Promise fails
+        else resolve(result)         // Promise succeeds
+    })
+})
+```
+
+**Stream Piping:**
+```javascript
+stream.pipe(uploadStream)
+```
+- `.pipe()`: Connects readable stream to writable stream
+- Data flows: `req.file.buffer` → `stream` → `uploadStream` → Cloudinary
+
+**Storing the URL:**
+```javascript
+existingUser.avatar = result.secure_url
+```
+- `result.secure_url`: HTTPS URL of uploaded image
+- Saved to user's document
+
+---
+
+### 5. Save Changes to Database
+```javascript
+await existingUser.save()
+```
+- Mongoose `.save()`: Commits all changes to MongoDB
+- Validates data, runs hooks, updates document
+
+---
+
+### 6. Redis Cache Invalidation
+```javascript
+try {
+    const allUsers = await User.find()
+    await Promise.all(
+        allUsers.map(user => redisClient.del`users:${user._id.toString()}`)
+    )
+} catch (cacheError) {
+    console.warn('Warning: Could not invalidate Redis cache:', cacheError)
+}
+```
+
+**Why invalidate cache?**
+When User A updates their avatar, User B's cached user list shows the old avatar. Invalidating ensures fresh data on next fetch.
+
+**The Logic:**
+1. `User.find()`: Gets all users from database
+2. `.map()`: Transforms each user into a delete operation
+3. `Promise.all()`: Executes all deletes concurrently
+
+**⚠️ CRITICAL BUG:**
+```javascript
+redisClient.del`users:${user._id.toString()}`
+```
+**This is wrong!** Should be:
+```javascript
+redisClient.del(`users:${user._id.toString()}`)
+```
+
+**Template Literals vs Function Calls:**
+```javascript
+// WRONG - Tagged template literal (special syntax)
+redisClient.del`users:${id}`
+
+// CORRECT - Function call with string argument
+redisClient.del(`users:${id}`)
+```
+
+---
+
+### 7. Hide Sensitive Data
+```javascript
+existingUser.password = undefined
+```
+- Removes password from response object
+- **Does NOT delete from database** (not saved again)
+- Security best practice
+
+---
+
+### 8. Success Response
 ```javascript
 return res.status(200).json({
-  success: true,
-  users: filteredUsers,
-  unseenMessages,
-});
+    message: 'Profile updated successfully',
+    user: existingUser
+})
 ```
 
-**Response format:**
-```json
-{
-  "success": true,
-  "users": [
-    { "_id": "123", "name": "John", "email": "john@example.com" },
-    { "_id": "456", "name": "Jane", "email": "jane@example.com" }
-  ],
-  "unseenMessages": {
-    "123": 5,
-    "456": 2
-  }
+---
+
+## Key Concepts Explained
+
+### 1. Async/Await
+```javascript
+// Without async/await
+User.save()
+    .then(user => res.json(user))
+    .catch(err => res.status(500).json(err))
+
+// With async/await (cleaner)
+try {
+    const user = await User.save()
+    res.json(user)
+} catch (err) {
+    res.status(500).json(err)
 }
 ```
 
 ---
 
-### 3. `getMessages(req, res)`
-
-**Purpose:** Retrieves all messages between two users and marks unread messages as seen
-
+### 2. Destructuring
 ```javascript
-const getMessages = async (req, res) => {
-  try {
-    const myId = req.user._id.toString();
-    const { selectedId } = req.body;
-```
+// Object destructuring
+const { username, email } = req.body
+// Same as:
+const username = req.body.username
+const email = req.body.email
 
-**Step-by-step breakdown:**
-
-#### Step 1: Extract User IDs
-```javascript
-const myId = req.user._id.toString();
-const { selectedId } = req.body;
-const ids = [myId, selectedId].sort();
-const cacheKey = `messages:${ids[0]}:${ids[1]}`;
-```
-- Gets current user ID from authenticated request
-- Gets selected chat partner ID from request body
-- **Sorts IDs** to create consistent cache key (important!)
-
-#### Step 2: Check Cache
-```javascript
-const cachedMessages = await redisClient.get(cacheKey);
-let chats;
-
-if (cachedMessages) {
-  chats = JSON.parse(cachedMessages);
-  // Mark messages as seen...
-  await redisClient.del(cacheKey);
-}
-```
-- Checks if conversation is cached
-- If cached: parses messages and immediately deletes cache (because we're about to mark messages as seen, changing the data)
-
-#### Step 3: Mark Messages as Seen
-```javascript
-await Message.updateMany(
-  {
-    senderId: selectedId,
-    receiverId: myId,
-    seen: false,
-  },
-  { $set: { seen: true } }
-);
-```
-- **Updates multiple documents** in MongoDB
-- **Filter criteria:**
-  - Messages sent BY the other user
-  - Messages sent TO current user
-  - Messages that haven't been seen
-- **Update:** Sets `seen` field to `true`
-
-#### Step 4: Fetch Messages (if cache miss)
-```javascript
-chats = await Message.find({
-  $or: [
-    { senderId: myId, receiverId: selectedId },
-    { senderId: selectedId, receiverId: myId },
-  ],
-}).sort({ createdAt: 1 });
-```
-- **`$or` operator**: Finds messages where EITHER condition is true
-  - Messages sent BY me TO them
-  - Messages sent BY them TO me
-- **`.sort({ createdAt: 1 })`**: Sorts by creation date ascending (oldest first)
-
-#### Step 5: Cache and Return
-```javascript
-await redisClient.setEx(
-  cacheKey,
-  DEFAULT_EXPIRATION,
-  JSON.stringify(chats)
-);
-
-return res.status(200).json(chats);
-```
-- Stores messages in Redis with 1-hour expiration
-- Returns message array directly (not wrapped in object)
-
----
-
-### 4. `markMessageAsSeen(req, res)`
-
-**Purpose:** Marks a single message as read and invalidates related caches
-
-```javascript
-const markMessageAsSeen = async (req, res) => {
-  try {
-    const { id } = req.params;
-```
-
-**Step-by-step breakdown:**
-
-#### Step 1: Extract Message ID
-```javascript
-const { id } = req.params;
-```
-- Gets message ID from URL parameters (e.g., `/api/messages/mark-seen/12345`)
-
-#### Step 2: Update Message
-```javascript
-const message = await Message.findByIdAndUpdate(
-  id,
-  { seen: true },
-  { new: true }
-);
-```
-- **`findByIdAndUpdate()`**: Finds document by ID and updates it
-- **First argument**: Message ID to find
-- **Second argument**: Update operation (set `seen` to `true`)
-- **Third argument `{ new: true }`**: Returns updated document (not original)
-
-#### Step 3: Handle Not Found
-```javascript
-if (!message) {
-  return res.status(404).json({
-    success: false,
-    message: "Message not found"
-  });
-}
-```
-- Checks if message exists
-- Returns 404 error if not found
-
-#### Step 4: Invalidate Cache
-```javascript
-await invalidateMessageCache(
-  message.senderId.toString(),
-  message.receiverId.toString()
-);
-```
-- Clears cached messages between sender and receiver
-- Ensures next fetch gets updated data from database
-
-#### Step 5: Success Response
-```javascript
-res.status(200).json({ success: true });
+// Array destructuring
+const [first, second] = [1, 2, 3]
+// first = 1, second = 2
 ```
 
 ---
 
-## Cache Key Patterns
-
-### User List Cache
+### 3. Promises
+```javascript
+new Promise((resolve, reject) => {
+    // resolve(value) - Success
+    // reject(error)  - Failure
+})
 ```
-users:{userId}
-```
-**Example:** `users:507f1f77bcf86cd799439011`
 
-Stores the list of all users for a specific user's sidebar.
+---
 
-### Message Cache
+### 4. Stream Operations
+```javascript
+const stream = Readable.from(buffer)  // Create readable
+stream.pipe(destination)              // Connect to writable
 ```
-messages:{userId1}:{userId2}
-```
-**Example:** `messages:507f1f77bcf86cd799439011:507f191e810c19729de860ea`
 
-Stores conversation between two users (IDs always sorted alphabetically).
+**Benefits:**
+- Memory efficient (processes chunks)
+- Faster for large files
+- Non-blocking I/O
+
+---
+
+### 5. MongoDB/Mongoose
+```javascript
+const existingUser = await User.findById(id)  // Query
+existingUser.username = 'new'                  // Modify
+await existingUser.save()                      // Persist
+```
+
+---
+
+### 6. Express Response Methods
+```javascript
+res.status(200)           // Set HTTP status code
+res.json({ data })        // Send JSON response
+res.status(404).json({})  // Chain methods
+```
 
 ---
 
 ## Error Handling
 
-All functions use try-catch blocks:
-
+### 1. User Not Found (404)
 ```javascript
+if (!existingUser) {
+    return res.status(404).json({ error: 'User not found' })
+}
+```
+
+### 2. Upload Failure (400)
+```javascript
+catch (uploadError) {
+    return res.status(400).json({ error: 'Failed to upload avatar' })
+}
+```
+
+### 3. Duplicate Username (400)
+```javascript
+if (error.code === 11000) {  // MongoDB duplicate key error
+    return res.status(400).json({ error: 'Username already taken' })
+}
+```
+
+### 4. Server Error (500)
+```javascript
+return res.status(500).json({ error: 'Internal Server Error' })
+```
+
+### 5. Non-Blocking Cache Errors
+```javascript
+catch (cacheError) {
+    console.warn('Warning: Could not invalidate Redis cache:', cacheError)
+    // Continues execution - doesn't fail the request
+}
+```
+
+---
+
+## Redis Cache Invalidation Strategy
+
+### Current Implementation
+```javascript
+// Delete cache for ALL users when ONE user updates profile
+const allUsers = await User.find()
+allUsers.map(user => redisClient.del(`users:${user._id}`))
+```
+
+**Problems:**
+- ❌ Inefficient: Deletes thousands of keys for one update
+- ❌ Database load: Fetches all users unnecessarily
+- ❌ Slow: Sequential deletes
+
+### Better Approach
+```javascript
+// Only delete relevant caches
+await redisClient.del(`user:${existingUser._id}`)
+await redisClient.del('users:list')  // If you cache a user list
+```
+
+---
+
+## Important Notes & Issues
+
+### ✅ Good Practices
+1. Non-blocking cache errors (using `console.warn`)
+2. Hiding passwords in responses
+3. Specific error codes (11000 for duplicates)
+4. Using streams for file uploads
+
+---
+
+### ❌ Issues to Fix
+
+#### 1. Template Literal Bug
+```javascript
+// Current (WRONG)
+redisClient.del`users:${user._id.toString()}`
+
+// Fixed (CORRECT)
+redisClient.del(`users:${user._id.toString()}`)
+```
+
+---
+
+#### 2. Inefficient Cache Invalidation
+```javascript
+// Current: Deletes ALL user caches
+const allUsers = await User.find()
+
+// Better: Delete only what's needed
+await redisClient.del(`user:${existingUser._id}`)
+```
+
+---
+
+#### 3. No Transaction Safety
+If `.save()` fails after Cloudinary upload, you have orphaned images:
+```javascript
+// Solution: Use try-catch around both operations
+let uploadedUrl
 try {
-  // Main logic
-} catch (error) {
-  console.error(error);
-  return res.status(500).json({ 
-    message: "Internal Server Error" 
-  });
-}
-```
-
-**Error handling strategy:**
-- Logs errors to console for debugging
-- Returns generic 500 error to client (doesn't expose internal details)
-- Prevents application crashes
-
----
-
-## Performance Optimization
-
-### Caching Strategy
-
-1. **First Request:** Data fetched from MongoDB, stored in Redis
-2. **Subsequent Requests:** Data retrieved from Redis (much faster)
-3. **After 1 Hour:** Cache expires, next request fetches fresh data
-4. **On Updates:** Cache invalidated immediately to prevent stale data
-
-### Parallel Processing
-
-```javascript
-await Promise.all(
-  filteredUsers.map(async (user) => {
-    // Count unseen messages
-  })
-);
-```
-- Runs multiple database queries simultaneously
-- Much faster than sequential processing
-
----
-
-## Data Flow Diagrams
-
-### Get Messages Flow
-
-```
-User requests messages
-         ↓
-Check Redis cache
-         ↓
-    ┌────┴────┐
-    ↓         ↓
-  Cache     Cache
-  Hit       Miss
-    ↓         ↓
-  Parse   Query DB
-  JSON      ↓
-    └────┬──┘
-         ↓
-   Mark as seen
-         ↓
-   Update cache
-         ↓
-  Return messages
-```
-
-### Cache Invalidation Flow
-
-```
-Message marked as seen
-         ↓
-   Update database
-         ↓
-Delete message cache
-         ↓
-Delete user caches
-         ↓
-  Success response
-```
-
----
-
-## API Endpoints Expected
-
-Based on the controller functions, these routes would be defined elsewhere:
-
-```javascript
-// Likely in routes file:
-router.get('/users', getUsersForSideBar);
-router.post('/messages', getMessages);
-router.patch('/messages/mark-seen/:id', markMessageAsSeen);
-```
-
----
-
-## MongoDB Schema Assumptions
-
-### Message Model
-```javascript
-{
-  senderId: ObjectId,      // Who sent the message
-  receiverId: ObjectId,    // Who receives the message
-  seen: Boolean,           // Whether message has been read
-  createdAt: Date,         // When message was created
-  // ... other fields
-}
-```
-
-### User Model
-```javascript
-{
-  _id: ObjectId,
-  name: String,
-  email: String,
-  password: String,  // Excluded in queries
-  // ... other fields
+    // Upload
+    uploadedUrl = result.secure_url
+    existingUser.avatar = uploadedUrl
+    await existingUser.save()
+} catch (saveError) {
+    // Rollback: delete uploaded image
+    if (uploadedUrl) {
+        await cloudinary.uploader.destroy(public_id)
+    }
+    throw saveError
 }
 ```
 
 ---
 
-## Important Notes
-
-### Authentication Required
-All functions expect `req.user` to exist, meaning authentication middleware must run before these controllers.
-
-### ID Sorting
-User IDs are always sorted when creating cache keys to ensure consistency:
+#### 4. Missing Input Validation
 ```javascript
-const ids = [userId1, userId2].sort();
-```
-This prevents having two different cache entries for the same conversation.
-
-### Cache Invalidation Timing
-- Messages are marked as seen immediately when fetched
-- Cache is deleted after marking to ensure fresh data
-- User sidebar cache is also cleared to update unseen counts
-
----
-
----
-
-## Module Exports
-
-```javascript
-module.exports = {
-  getUsersForSideBar,
-  getMessages,
-  markMessageAsSeen
-};
+// Add before processing
+if (username && username.length < 3) {
+    return res.status(400).json({ error: 'Username too short' })
+}
 ```
 
-These functions are exported to be used in route definitions.
+---
+
+## Usage Example
+
+```javascript
+// Frontend code
+const formData = new FormData()
+formData.append('username', 'newUsername')
+formData.append('avatar', fileInput.files[0])
+
+await fetch('/api/user/update', {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer token' },
+    body: formData
+})
+```
 
 ---
 
-## Testing Considerations
+## Environment Variables Needed
 
-When testing this code:
-- Mock Redis client to avoid requiring actual Redis server
-- Mock MongoDB models for unit testing
-- Test cache hit and miss scenarios separately
-- Test error handling paths
-- Verify cache invalidation occurs at correct times
-- Test with different user combinations to ensure ID sorting works
-
----
-
-## Common Issues & Solutions
-
-### Issue: Stale unseen message counts
-**Solution:** `invalidateMessageCache()` clears user caches when messages are marked as seen
-
-### Issue: Different cache keys for same conversation
-**Solution:** IDs are sorted before creating cache key
-
-### Issue: Cache never updates
-**Solution:** TTL of 1 hour ensures periodic refresh; manual invalidation on updates
-
-### Issue: Race conditions on concurrent updates
-**Solution:** Consider using Redis transactions or locks for critical operations
+```env
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
+REDIS_URL=redis://localhost:6379
+```
 
 ---
 
-*This documentation covers the complete messaging controller implementation with Redis caching for a real-time chat application.*
+## Installation
+
+```bash
+npm install express mongoose redis cloudinary multer
+```
+
+---
+
+## Complete Code with Fixes
+
+```javascript
+const User = require('../models/User')
+const cloudinary = require('../config/cloudnary')
+const { Readable } = require('stream')
+const Redis = require('redis')
+
+const redisClient = Redis.createClient()
+redisClient.on('error', (err) => console.error('Redis Client Error', err))
+redisClient.connect()
+
+const UpDateUser = async (req, res) => {
+    try {
+        const { username } = req.body
+        const existingUser = req.user
+        
+        if (!existingUser) {
+            return res.status(404).json({
+                error: 'User not found'
+            })
+        }
+
+        // Validate username if provided
+        if (username) {
+            if (username.length < 3) {
+                return res.status(400).json({
+                    error: 'Username must be at least 3 characters'
+                })
+            }
+            existingUser.username = username
+        }
+
+        let uploadedPublicId
+        if (req.file) {
+            try {
+                const stream = Readable.from(req.file.buffer)
+                const publicId = `avatar_${existingUser._id}`
+                
+                const result = await new Promise((resolve, reject) => {
+                    const uploadStream = cloudinary.uploader.upload_stream(
+                        {
+                            folder: 'ping-me/avatars',
+                            resource_type: 'auto',
+                            public_id: publicId
+                        },
+                        (error, result) => {
+                            if (error) reject(error)
+                            else resolve(result)
+                        }
+                    )
+                    stream.pipe(uploadStream)
+                })
+                
+                uploadedPublicId = publicId
+                existingUser.avatar = result.secure_url
+            } catch (uploadError) {
+                console.error('Cloudinary upload error:', uploadError)
+                return res.status(400).json({
+                    error: 'Failed to upload avatar'
+                })
+            }
+        }
+
+        // Save changes
+        try {
+            await existingUser.save()
+        } catch (saveError) {
+            // Rollback: delete uploaded image if save fails
+            if (uploadedPublicId) {
+                await cloudinary.uploader.destroy(uploadedPublicId).catch(err => 
+                    console.error('Failed to cleanup uploaded image:', err)
+                )
+            }
+            throw saveError
+        }
+
+        // Invalidate only relevant Redis cache
+        try {
+            await redisClient.del(`user:${existingUser._id.toString()}`)
+            await redisClient.del('users:list') // If you cache a full user list
+        } catch (cacheError) {
+            console.warn('Warning: Could not invalidate Redis cache:', cacheError)
+        }
+
+        // Hide password
+        existingUser.password = undefined
+
+        return res.status(200).json({
+            message: 'Profile updated successfully',
+            user: existingUser
+        })
+    } catch (error) {
+        if (error.code === 11000) {
+            return res.status(400).json({
+                error: 'Username already taken'
+            })
+        }
+        console.error(error)
+        return res.status(500).json({
+            error: 'Internal Server Error'
+        })
+    }
+}
+
+module.exports = { UpDateUser }
+```
+
+---
+
+## Summary
+This controller efficiently handles profile updates with cloud storage and caching. The fixed version includes proper Redis syntax, optimized cache invalidation, transaction safety, and input validation for production use.
+
+---
+
+## License
+MIT
+
+---
+
+## Contributing
+Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
